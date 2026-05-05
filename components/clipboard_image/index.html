@@ -1,0 +1,174 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paste Image</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        font-family: sans-serif;
+      }
+      .wrap {
+        border: 1px dashed rgba(15, 23, 42, 0.25);
+        border-radius: 14px;
+        padding: 14px;
+        background: rgba(248, 250, 252, 0.95);
+      }
+      .box {
+        min-height: 110px;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        border-radius: 12px;
+        background: white;
+        color: #334155;
+        padding: 12px;
+        outline: none;
+      }
+      .box:focus {
+        border: 2px solid #2563eb;
+      }
+      .title {
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 4px;
+      }
+      .hint {
+        font-size: 13px;
+        color: #64748b;
+      }
+      .preview {
+        margin-top: 10px;
+        display: none;
+        max-width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(15, 23, 42, 0.1);
+      }
+      .actions {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: #0f172a;
+        color: white;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button.secondary {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      .status {
+        margin-top: 8px;
+        font-size: 13px;
+        color: #475569;
+        min-height: 1.2em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="dropzone" class="box" tabindex="0">
+        <div>
+          <div class="title">Paste an image here</div>
+          <div class="hint">Click this box and press Ctrl+V / Cmd+V</div>
+        </div>
+      </div>
+      <img id="preview" class="preview" alt="Pasted image preview" />
+      <div class="actions">
+        <button id="clearBtn" type="button" class="secondary">Clear</button>
+      </div>
+      <div id="status" class="status"></div>
+    </div>
+
+    <script src="https://unpkg.com/streamlit-component-lib@2.0.0/dist/streamlit-component-lib.js"></script>
+    <script>
+      const { Streamlit } = window;
+      const dropzone = document.getElementById("dropzone");
+      const preview = document.getElementById("preview");
+      const status = document.getElementById("status");
+      const clearBtn = document.getElementById("clearBtn");
+
+      function sendValue(value) {
+        Streamlit.setComponentValue(value);
+      }
+
+      async function fileToDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
+      async function handleClipboard(event) {
+        const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
+        const imageItem = items.find((item) => item.type && item.type.startsWith("image/"));
+        if (!imageItem) {
+          status.textContent = "No image found in clipboard.";
+          return;
+        }
+
+        const file = imageItem.getAsFile();
+        if (!file) {
+          status.textContent = "Clipboard image could not be read.";
+          return;
+        }
+
+        const dataUrl = await fileToDataUrl(file);
+        preview.src = dataUrl;
+        preview.style.display = "block";
+        status.textContent = `Pasted ${file.type || "image"}`;
+        sendValue({
+          kind: "pasted_image",
+          fileName: file.name || "pasted_image.png",
+          mimeType: file.type || "image/png",
+          dataUrl,
+        });
+        Streamlit.setFrameHeight(document.body.scrollHeight);
+      }
+
+      dropzone.addEventListener("paste", (event) => {
+        event.preventDefault();
+        handleClipboard(event).catch(() => {
+          status.textContent = "Failed to read pasted image.";
+        });
+      });
+
+      dropzone.addEventListener("click", () => dropzone.focus());
+      dropzone.addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+          event.preventDefault();
+        }
+      });
+
+      clearBtn.addEventListener("click", () => {
+        preview.removeAttribute("src");
+        preview.style.display = "none";
+        status.textContent = "Cleared.";
+        sendValue(null);
+        Streamlit.setFrameHeight(document.body.scrollHeight);
+      });
+
+      Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, () => {
+        Streamlit.setFrameHeight(document.body.scrollHeight);
+      });
+
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(document.body.scrollHeight);
+    </script>
+  </body>
+</html>
