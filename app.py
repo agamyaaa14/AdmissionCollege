@@ -578,20 +578,42 @@ with tab_signature:
         )
 
 with tab_pdf:
-    uploaded_pdf = st.file_uploader("Upload marks card PDF", type=["pdf"], key="pdf")
-    if uploaded_pdf:
-        st.caption(f"{filesize_label(uploaded_pdf.size)}")
-        pdf_bytes, pdf_status = compress_pdf(uploaded_pdf)
-        if pdf_bytes is None:
-            st.error(f"PDF compression is unavailable: {pdf_status}")
-        else:
-            st.success("Ready")
-            st.caption(f"Compressed size: {filesize_label(len(pdf_bytes))}")
-            render_copy_button(pdf_bytes, "application/pdf", "Copy compressed PDF", "copy-pdf")
-            st.download_button(
-                "Download compressed PDF",
-                data=pdf_bytes,
-                file_name=f"{filename_prefix}_marks_card.pdf",
-                mime="application/pdf",
-                key="download_pdf",
-            )
+    pdf_choice_tabs = st.tabs(["10th marks card", "12th marks card"])
+
+    with pdf_choice_tabs[0]:
+        uploaded_pdf_10th = st.file_uploader("Upload 10th marks card PDF", type=["pdf"], key="pdf10")
+        if uploaded_pdf_10th:
+            st.caption(f"{filesize_label(uploaded_pdf_10th.size)}")
+            pdf_bytes, pdf_status = compress_pdf(uploaded_pdf_10th)
+            if pdf_bytes is None:
+                st.error(f"PDF compression is unavailable: {pdf_status}")
+            else:
+                st.success("Ready")
+                st.caption(f"Compressed size: {filesize_label(len(pdf_bytes))}")
+                render_copy_button(pdf_bytes, "application/pdf", "Copy compressed PDF", "copy-pdf-10th")
+                st.download_button(
+                    "Download compressed PDF",
+                    data=pdf_bytes,
+                    file_name=f"{filename_prefix}_10th_marks_card.pdf",
+                    mime="application/pdf",
+                    key="download_pdf_10th",
+                )
+
+    with pdf_choice_tabs[1]:
+        uploaded_pdf_12th = st.file_uploader("Upload 12th marks card PDF", type=["pdf"], key="pdf12")
+        if uploaded_pdf_12th:
+            st.caption(f"{filesize_label(uploaded_pdf_12th.size)}")
+            pdf_bytes, pdf_status = compress_pdf(uploaded_pdf_12th)
+            if pdf_bytes is None:
+                st.error(f"PDF compression is unavailable: {pdf_status}")
+            else:
+                st.success("Ready")
+                st.caption(f"Compressed size: {filesize_label(len(pdf_bytes))}")
+                render_copy_button(pdf_bytes, "application/pdf", "Copy compressed PDF", "copy-pdf-12th")
+                st.download_button(
+                    "Download compressed PDF",
+                    data=pdf_bytes,
+                    file_name=f"{filename_prefix}_12th_marks_card.pdf",
+                    mime="application/pdf",
+                    key="download_pdf_12th",
+                )
