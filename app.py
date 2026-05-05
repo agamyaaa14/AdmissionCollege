@@ -9,8 +9,6 @@ from typing import Any
 
 import numpy as np
 import streamlit as st
-import streamlit.components.v1 as components
-from streamlit.components.v1 import declare_component
 from PIL import Image, ImageFilter, ImageOps
 
 try:
@@ -40,8 +38,6 @@ PHOTO_TARGET_SIZE = (600, 750)
 PDF_DEFAULT_DPI = 140
 PDF_DEFAULT_QUALITY = 75
 
-COMPONENT_DIR = Path(__file__).parent / "components" / "clipboard_image"
-clipboard_image_component = declare_component("clipboard_image", path=str(COMPONENT_DIR))
 
 
 @dataclass
@@ -60,29 +56,6 @@ def image_from_data_url(data_url: str) -> Image.Image:
     return Image.open(BytesIO(data)).convert("RGBA")
 
 
-def parse_pasted_image(payload: Any) -> tuple[Image.Image | None, str | None]:
-    if not payload or not isinstance(payload, dict):
-        return None, None
-    data_url = payload.get("dataUrl")
-    if not data_url:
-        return None, None
-    image = image_from_data_url(data_url)
-    file_name = payload.get("fileName") or "pasted_image.png"
-    return image, file_name
-
-
-def render_clipboard_image_input(key: str) -> tuple[Image.Image | None, str | None]:
-    st.caption("Or paste an image from the clipboard below.")
-    try:
-        payload = clipboard_image_component(key=key)
-    except Exception:
-        # Fallback when component frontend can't be served (network/proxy/permission issues)
-        st.info(
-            "Paste support is unavailable in this environment.\nPlease paste the image into an image editor (Paint), save it, then upload using the file picker."
-        )
-        return None, None
-
-    return parse_pasted_image(payload)
 
 
 def image_to_bytes(image: Image.Image, format_name: str, **save_kwargs) -> bytes:
@@ -381,55 +354,9 @@ def safe_filename_part(value: str) -> str:
     return cleaned or "student"
 
 
-def render_copy_button(file_bytes: bytes, mime_type: str, button_label: str, button_id: str) -> None:
-    payload = base64.b64encode(file_bytes).decode("ascii")
-    html = f"""
-    <button id="{button_id}" style="
-        padding: 0.65rem 1rem;
-        border-radius: 0.7rem;
-        border: 1px solid rgba(15, 23, 42, 0.15);
-        background: #0f172a;
-        color: white;
-        cursor: pointer;
-        font-weight: 600;
-        width: 100%;
-    ">{button_label}</button>
-    <script>
-    const button = document.getElementById("{button_id}");
-    button.addEventListener("click", async () => {{
-        try {{
-            const response = await fetch("data:{mime_type};base64,{payload}");
-            const blob = await response.blob();
-            if (navigator.clipboard && window.ClipboardItem) {{
-                await navigator.clipboard.write([new ClipboardItem({{ "{mime_type}": blob }})]);
-                button.innerText = "Copied";
-                setTimeout(() => button.innerText = "{button_label}", 1400);
-            }} else {{
-                button.innerText = "Clipboard not supported";
-                setTimeout(() => button.innerText = "{button_label}", 1800);
-            }}
-        }} catch (error) {{
-            button.innerText = "Copy failed";
-            setTimeout(() => button.innerText = "{button_label}", 1800);
-        }}
-    }});
-    </script>
-    """
-    components.html(html, height=70)
 
 
-def display_rules() -> None:
-    with st.expander("Rules", expanded=False):
-        st.markdown("### Photo Rules")
-        st.markdown(
-            "- JPG, JPEG, PNG\n- Maximum 200 KB\n- Minimum 250 x 300 px\n- Passport-style ratio: 0.65-0.85 or 0.95-1.05\n- Exactly one centered face\n- Plain light background\n- Rejects blurry, busy, cartoon-like, or avatar-style images"
-        )
-        st.markdown("### Signature Rules")
-        st.markdown(
-            "- JPG, JPEG, PNG\n- Maximum 100 KB\n- Width at least 200 px\n- Ratio between 1.5 and 4.5\n- White or transparent background\n- No face in the image\n- Rejects blank or noisy signatures"
-        )
-        st.markdown("### Marks Card PDF")
-        st.markdown("- Optimizes scanned PDFs to help get them under 200 KB\n- Uses raster compression, so document clarity depends on the chosen DPI")
+# Note: UI simplified per user request — rules, clipboard paste, and copy-to-clipboard removed.
 
 
 st.set_page_config(page_title="BCWCC Admission Helper", page_icon="🎓", layout="wide")
@@ -473,25 +400,39 @@ st.markdown(
         border-radius: 0.7rem !important;
     }
     .stDownloadButton > button {
-        background: #124734 !important;
+        background: #0f8b3a !important;
         color: #ffffff !important;
-        border: 1px solid #0b2f24 !important;
+        border: 1px solid transparent !important;
         font-weight: 700 !important;
         border-radius: 0.7rem !important;
+        padding: 0.6rem 1rem !important;
     }
-    /* Constrain file uploader to a centered square */
+    /* Ensure nested text inside download buttons is white */
+    .stDownloadButton button, .stDownloadButton > button, .stDownloadButton span, .stDownloadButton > button * {
+        color: #ffffff !important;
+    }
+    /* Constrain file uploader to a compact box to avoid large gaps */
     .stFileUploader, .stFileUploader > div {
         max-width: 360px !important;
         width: 360px !important;
-        height: 360px !important;
-        aspect-ratio: 1 / 1;
+        height: auto !important;
+        min-height: 120px !important;
+        max-height: 220px !important;
         display: block;
+        margin-bottom: 8px !important;
         margin-left: 0 !important;
         margin-right: 0 !important;
-        float: left !important;
     }
     .stFileUploader .css-1r6slb0 { /* dropzone inner (best effort) */
-        height: 100% !important;
+        height: auto !important;
+        min-height: 120px !important;
+    }
+    /* Make small image previews sit closer to uploader */
+    .stImage img {
+        margin-top: 6px !important;
+        margin-left: 0 !important;
+        border-radius: 8px !important;
+        box-shadow: none !important;
     }
     /* Make text larger and darker for readability (less aggressive specificity) */
     body, label, p, span, h2, h3, h4, .stMarkdown, .stCaption, .stText {
@@ -516,7 +457,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-display_rules()
+# rules removed per user request
 
 student_first_name = st.text_input("Student first name", placeholder="Enter first name for file names")
 filename_prefix = safe_filename_part(student_first_name) if student_first_name else "student"
@@ -525,23 +466,10 @@ tab_photo, tab_signature, tab_pdf = st.tabs(["Photo", "Signature", "Marks Card P
 
 with tab_photo:
     uploaded_photo = st.file_uploader("Upload student photo", type=["jpg", "jpeg", "png"], key="photo")
-    pasted_photo_image, pasted_photo_name = render_clipboard_image_input("photo-paste")
-    photo_image = pil_image_from_upload(uploaded_photo) if uploaded_photo else pasted_photo_image
-
-    if photo_image is not None:
-        st.caption(f"{photo_image.width} x {photo_image.height}px")
-        photo_bytes, photo_fmt, photo_validation, processed_photo = process_photo(photo_image, PHOTO_TARGET_RATIO, PHOTO_TARGET_SIZE)
-
-        if photo_validation.ok:
-            st.success("Ready")
-        else:
-            st.warning("Needs review")
-            for message in photo_validation.messages:
-                st.write(f"- {message}")
-
-        st.image(processed_photo, caption="Processed photo preview", use_container_width=True)
-        st.caption(f"Processed size: {filesize_label(len(photo_bytes))} | Output format: {photo_fmt.upper()}")
-        render_copy_button(photo_bytes, "image/jpeg" if photo_fmt == "jpeg" else "image/png", "Copy processed photo", "copy-photo")
+    if uploaded_photo:
+        photo_image = pil_image_from_upload(uploaded_photo)
+        photo_bytes, photo_fmt, _photo_validation, processed_photo = process_photo(photo_image, PHOTO_TARGET_RATIO, PHOTO_TARGET_SIZE)
+        st.image(processed_photo, width=140)
         st.download_button(
             "Download processed photo",
             data=photo_bytes,
@@ -552,23 +480,10 @@ with tab_photo:
 
 with tab_signature:
     uploaded_signature = st.file_uploader("Upload signature image", type=["jpg", "jpeg", "png"], key="signature")
-    pasted_signature_image, pasted_signature_name = render_clipboard_image_input("signature-paste")
-    signature_image = pil_image_from_upload(uploaded_signature) if uploaded_signature else pasted_signature_image
-
-    if signature_image is not None:
-        st.caption(f"{signature_image.width} x {signature_image.height}px")
-        signature_bytes, signature_fmt, signature_validation, processed_signature = process_signature(signature_image)
-
-        if signature_validation.ok:
-            st.success("Ready")
-        else:
-            st.warning("Needs review")
-            for message in signature_validation.messages:
-                st.write(f"- {message}")
-
-        st.image(processed_signature, caption="Processed signature preview", use_container_width=True)
-        st.caption(f"Processed size: {filesize_label(len(signature_bytes))} | Output format: {signature_fmt.upper()}")
-        render_copy_button(signature_bytes, "image/jpeg" if signature_fmt == "jpeg" else "image/png", "Copy processed signature", "copy-signature")
+    if uploaded_signature:
+        signature_image = pil_image_from_upload(uploaded_signature)
+        signature_bytes, signature_fmt, _sig_validation, processed_signature = process_signature(signature_image)
+        st.image(processed_signature, width=140)
         st.download_button(
             "Download processed signature",
             data=signature_bytes,
@@ -583,14 +498,10 @@ with tab_pdf:
     with pdf_choice_tabs[0]:
         uploaded_pdf_10th = st.file_uploader("Upload 10th marks card PDF", type=["pdf"], key="pdf10")
         if uploaded_pdf_10th:
-            st.caption(f"{filesize_label(uploaded_pdf_10th.size)}")
             pdf_bytes, pdf_status = compress_pdf(uploaded_pdf_10th)
             if pdf_bytes is None:
                 st.error(f"PDF compression is unavailable: {pdf_status}")
             else:
-                st.success("Ready")
-                st.caption(f"Compressed size: {filesize_label(len(pdf_bytes))}")
-                render_copy_button(pdf_bytes, "application/pdf", "Copy compressed PDF", "copy-pdf-10th")
                 st.download_button(
                     "Download compressed PDF",
                     data=pdf_bytes,
@@ -602,14 +513,10 @@ with tab_pdf:
     with pdf_choice_tabs[1]:
         uploaded_pdf_12th = st.file_uploader("Upload 12th marks card PDF", type=["pdf"], key="pdf12")
         if uploaded_pdf_12th:
-            st.caption(f"{filesize_label(uploaded_pdf_12th.size)}")
             pdf_bytes, pdf_status = compress_pdf(uploaded_pdf_12th)
             if pdf_bytes is None:
                 st.error(f"PDF compression is unavailable: {pdf_status}")
             else:
-                st.success("Ready")
-                st.caption(f"Compressed size: {filesize_label(len(pdf_bytes))}")
-                render_copy_button(pdf_bytes, "application/pdf", "Copy compressed PDF", "copy-pdf-12th")
                 st.download_button(
                     "Download compressed PDF",
                     data=pdf_bytes,
