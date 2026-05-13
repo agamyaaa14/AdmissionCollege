@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import streamlit as st
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 try:
     import cv2
@@ -47,7 +47,7 @@ class ValidationResult:
 
 
 def pil_image_from_upload(uploaded_file) -> Image.Image:
-    return Image.open(uploaded_file).convert("RGBA")
+    return ImageOps.exif_transpose(Image.open(uploaded_file)).convert("RGBA")
 
 
 def image_from_data_url(data_url: str) -> Image.Image:
@@ -354,6 +354,210 @@ def safe_filename_part(value: str) -> str:
     return cleaned or "student"
 
 
+def nudge_image_rotation(prefix: str, degrees: int) -> None:
+    current_value = int(st.session_state.get(f"{prefix}_rotation", 0))
+    st.session_state[f"{prefix}_rotation"] = current_value + degrees
+
+
+def apply_image_edits(
+    image: Image.Image,
+    brightness: float,
+    rotation: int,
+) -> Image.Image:
+    working = ImageOps.exif_transpose(image).convert("RGBA")
+
+    if rotation:
+        working = working.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+
+    if brightness != 1.0:
+        working = ImageEnhance.Brightness(working).enhance(brightness)
+
+    return working
+
+
+def flatten_to_rgb(image: Image.Image) -> Image.Image:
+    rgba_image = image.convert("RGBA")
+    background = Image.new("RGBA", rgba_image.size, (255, 255, 255, 255))
+    return Image.alpha_composite(background, rgba_image).convert("RGB")
+
+
+def jpeg_bytes_under_limit(image: Image.Image, target_bytes: int) -> bytes:
+    working = flatten_to_rgb(image)
+    best_bytes = b""
+
+    for scale in (1.0, 0.85, 0.7, 0.55, 0.4):
+        candidate = working
+        if scale < 1.0:
+            candidate = working.resize(
+                (max(1, int(working.width * scale)), max(1, int(working.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+
+        for quality in (90, 80, 70, 60, 50):
+            data = image_to_bytes(candidate, "JPEG", quality=quality, optimize=True, progressive=True)
+            if not best_bytes or len(data) < len(best_bytes):
+                best_bytes = data
+            if len(data) <= target_bytes:
+                return data
+
+    return best_bytes
+
+
+def pdf_bytes_from_image(image: Image.Image, quality: int) -> bytes:
+    rgb_image = flatten_to_rgb(image)
+
+    if fitz is None:
+        buffer = BytesIO()
+        rgb_image.save(buffer, format="PDF", resolution=72.0)
+        return buffer.getvalue()
+
+    jpeg_data = image_to_bytes(rgb_image, "JPEG", quality=quality, optimize=True, progressive=True)
+    document = fitz.open()
+    page = document.new_page(width=rgb_image.width, height=rgb_image.height)
+    page.insert_image(page.rect, stream=jpeg_data)
+    pdf_bytes = document.write(deflate=True, garbage=4, clean=True)
+    document.close()
+    return pdf_bytes
+
+
+def image_to_pdf_under_limit(image: Image.Image, target_bytes: int) -> bytes:
+    working = flatten_to_rgb(ImageOps.exif_transpose(image))
+    best_bytes = b""
+
+    for scale in (1.0, 0.75, 0.5, 0.35):
+        candidate = working
+        if scale < 1.0:
+            candidate = working.resize(
+                (max(1, int(working.width * scale)), max(1, int(working.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+
+        for quality in (85, 70, 55, 45):
+            pdf_bytes = pdf_bytes_from_image(candidate, quality)
+            if not best_bytes or len(pdf_bytes) < len(best_bytes):
+                best_bytes = pdf_bytes
+            if len(pdf_bytes) <= target_bytes:
+                return pdf_bytes
+
+    return best_bytes
+
+
+def prepare_document_output(uploaded_file) -> tuple[bytes | None, str]:
+    file_name = (getattr(uploaded_file, "name", "") or "").lower()
+    file_type = (getattr(uploaded_file, "type", "") or "").lower()
+    is_pdf = file_name.endswith(".pdf") or file_type == "application/pdf"
+
+    if is_pdf:
+        pdf_bytes, status = compress_pdf(uploaded_file)
+        if pdf_bytes is None:
+            return None, status
+        return pdf_bytes, status
+
+    try:
+        image = pil_image_from_upload(uploaded_file)
+    except Exception:
+        return None, "Unsupported file type"
+
+    return image_to_pdf_under_limit(image, PDF_MAX_BYTES), "Converted image to PDF"
+
+
+def render_editable_image_section(
+    uploaded_file,
+    *,
+    key_prefix: str,
+    output_stub: str,
+    validation_fn,
+    min_width: int,
+    min_height: int,
+) -> None:
+    original_image = pil_image_from_upload(uploaded_file)
+
+    left_col, middle_col, right_col = st.columns([1.5, 1.2, 1.5], gap="medium")
+
+    with left_col:
+        with st.container(border=True):
+            st.markdown("**Original Image**")
+            st.image(original_image, width=120)
+            st.caption(f"{original_image.width} × {original_image.height} px")
+
+    with middle_col:
+        with st.container(border=True):
+            st.markdown("**Brightness**")
+            brightness = st.slider(
+                "Adjust brightness",
+                0.5,
+                2.0,
+                float(st.session_state.get(f"{key_prefix}_brightness", 1.0)),
+                0.05,
+                key=f"{key_prefix}_brightness",
+                label_visibility="collapsed",
+            )
+
+        st.markdown("")
+        with st.container(border=True):
+            st.markdown("**Rotate**")
+            rotate_left, rotate_right = st.columns(2)
+            with rotate_left:
+                if st.button("↺", key=f"{key_prefix}_rot_left", use_container_width=True, help="Rotate left 90°"):
+                    nudge_image_rotation(key_prefix, -90)
+            with rotate_right:
+                if st.button("↻", key=f"{key_prefix}_rot_right", use_container_width=True, help="Rotate right 90°"):
+                    nudge_image_rotation(key_prefix, 90)
+
+    with right_col:
+        with st.container(border=True):
+            st.markdown("**Preview**")
+            rotation = int(st.session_state.get(f"{key_prefix}_rotation", 0))
+            edited_image = apply_image_edits(original_image, brightness, rotation)
+            output_image = edited_image
+            if min_width or min_height:
+                output_image = resize_for_output(edited_image, min_width, min_height)
+
+            validation = validation_fn(output_image)
+            image_bytes = jpeg_bytes_under_limit(output_image, PHOTO_MAX_BYTES if output_stub == "photo" else SIGNATURE_MAX_BYTES)
+
+            st.image(output_image, width=120)
+            st.caption(f"{output_image.width} × {output_image.height} px | {filesize_label(len(image_bytes))}")
+
+    st.markdown("")
+    if validation.ok:
+        st.success("Image is ready to download")
+    else:
+        st.warning("Image needs review")
+        for message in validation.messages:
+            st.caption(f"• {message}")
+
+    st.download_button(
+        f"Download {output_stub.title()}.jpg",
+        data=image_bytes,
+        file_name=f"{filename_prefix}_{output_stub}.jpg",
+        mime="image/jpeg",
+        key=f"download_{key_prefix}",
+        use_container_width=True,
+    )
+
+
+def render_document_section(upload_label: str, *, key_prefix: str, output_stub: str) -> None:
+    uploaded_document = st.file_uploader(upload_label, type=["pdf", "jpg", "jpeg", "png"], key=key_prefix)
+    if not uploaded_document:
+        return
+
+    st.caption(f"Input: {filesize_label(uploaded_document.size)}")
+    pdf_bytes, status = prepare_document_output(uploaded_document)
+    if pdf_bytes is None:
+        st.error(f"Document conversion is unavailable: {status}")
+        return
+
+    st.caption(f"Output: {filesize_label(len(pdf_bytes))}")
+    st.download_button(
+        f"Download {output_stub} PDF",
+        data=pdf_bytes,
+        file_name=f"{filename_prefix}_{output_stub}.pdf",
+        mime="application/pdf",
+        key=f"download_{key_prefix}",
+    )
+
+
 
 
 # Note: UI simplified per user request — rules, clipboard paste, and copy-to-clipboard removed.
@@ -467,60 +671,38 @@ tab_photo, tab_signature, tab_pdf = st.tabs(["Photo", "Signature", "Marks Card P
 with tab_photo:
     uploaded_photo = st.file_uploader("Upload student photo", type=["jpg", "jpeg", "png"], key="photo")
     if uploaded_photo:
-        photo_image = pil_image_from_upload(uploaded_photo)
-        photo_bytes, photo_fmt, _photo_validation, processed_photo = process_photo(photo_image, PHOTO_TARGET_RATIO, PHOTO_TARGET_SIZE)
-        st.image(processed_photo, width=140)
-        st.download_button(
-            "Download processed photo",
-            data=photo_bytes,
-            file_name=f"{filename_prefix}_photo.{photo_fmt}",
-            mime="image/jpeg" if photo_fmt == "jpeg" else "image/png",
-            key="download_photo",
+        render_editable_image_section(
+            uploaded_photo,
+            key_prefix="photo",
+            output_stub="photo",
+            validation_fn=validate_photo,
+            min_width=PHOTO_MIN_WIDTH,
+            min_height=PHOTO_MIN_HEIGHT,
         )
 
 with tab_signature:
     uploaded_signature = st.file_uploader("Upload signature image", type=["jpg", "jpeg", "png"], key="signature")
     if uploaded_signature:
-        signature_image = pil_image_from_upload(uploaded_signature)
-        signature_bytes, signature_fmt, _sig_validation, processed_signature = process_signature(signature_image)
-        st.image(processed_signature, width=140)
-        st.download_button(
-            "Download processed signature",
-            data=signature_bytes,
-            file_name=f"{filename_prefix}_signature.{signature_fmt}",
-            mime="image/jpeg" if signature_fmt == "jpeg" else "image/png",
-            key="download_signature",
+        render_editable_image_section(
+            uploaded_signature,
+            key_prefix="signature",
+            output_stub="signature",
+            validation_fn=validate_signature,
+            min_width=SIGNATURE_MIN_WIDTH,
+            min_height=1,
         )
 
 with tab_pdf:
-    pdf_choice_tabs = st.tabs(["10th marks card", "12th marks card"])
+    pdf_choice_tabs = st.tabs(["10th marks card", "12th marks card", "Caste certificate", "Income certificate"])
 
     with pdf_choice_tabs[0]:
-        uploaded_pdf_10th = st.file_uploader("Upload 10th marks card PDF", type=["pdf"], key="pdf10")
-        if uploaded_pdf_10th:
-            pdf_bytes, pdf_status = compress_pdf(uploaded_pdf_10th)
-            if pdf_bytes is None:
-                st.error(f"PDF compression is unavailable: {pdf_status}")
-            else:
-                st.download_button(
-                    "Download compressed PDF",
-                    data=pdf_bytes,
-                    file_name=f"{filename_prefix}_10th_marks_card.pdf",
-                    mime="application/pdf",
-                    key="download_pdf_10th",
-                )
+        render_document_section("Upload 10th marks card PDF or image", key_prefix="pdf10", output_stub="10th_marks_card")
 
     with pdf_choice_tabs[1]:
-        uploaded_pdf_12th = st.file_uploader("Upload 12th marks card PDF", type=["pdf"], key="pdf12")
-        if uploaded_pdf_12th:
-            pdf_bytes, pdf_status = compress_pdf(uploaded_pdf_12th)
-            if pdf_bytes is None:
-                st.error(f"PDF compression is unavailable: {pdf_status}")
-            else:
-                st.download_button(
-                    "Download compressed PDF",
-                    data=pdf_bytes,
-                    file_name=f"{filename_prefix}_12th_marks_card.pdf",
-                    mime="application/pdf",
-                    key="download_pdf_12th",
-                )
+        render_document_section("Upload 12th marks card PDF or image", key_prefix="pdf12", output_stub="12th_marks_card")
+
+    with pdf_choice_tabs[2]:
+        render_document_section("Upload caste certificate PDF or image", key_prefix="caste_cert", output_stub="caste_certificate")
+
+    with pdf_choice_tabs[3]:
+        render_document_section("Upload income certificate PDF or image", key_prefix="income_cert", output_stub="income_certificate")
