@@ -103,10 +103,37 @@ def detect_faces(image: Image.Image) -> list[tuple[int, int, int, int]]:
     if cv2 is None:
         return []
 
+    # Runtime sanity checks for partially broken cv2 installs on cloud rebuilds
+    missing = [name for name in ("CascadeClassifier", "cvtColor", "data") if not hasattr(cv2, name)]
+    if missing:
+        raise RuntimeError(
+            "OpenCV runtime is missing required attributes: "
+            f"{', '.join(missing)}. "
+            f"cv2_file={getattr(cv2, '__file__', 'unknown')}, "
+            f"cv2_version={getattr(cv2, '__version__', 'unknown')}"
+        )
+
+    cascade_dir = getattr(cv2.data, "haarcascades", "")
+    cascade_path = Path(cascade_dir) / "haarcascade_frontalface_default.xml"
+    if not cascade_path.exists():
+        raise RuntimeError(
+            "Haar cascade file not found for OpenCV face detection. "
+            f"Expected path: {cascade_path}. "
+            f"cv2_file={getattr(cv2, '__file__', 'unknown')}, "
+            f"cv2_version={getattr(cv2, '__version__', 'unknown')}"
+        )
+
     image_rgb = np.array(image.convert("RGB"))
     gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
-    cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
     cascade = cv2.CascadeClassifier(str(cascade_path))
+    if getattr(cascade, "empty", lambda: True)():
+        raise RuntimeError(
+            "OpenCV failed to load Haar cascade classifier. "
+            f"cascade_path={cascade_path}, "
+            f"cv2_file={getattr(cv2, '__file__', 'unknown')}, "
+            f"cv2_version={getattr(cv2, '__version__', 'unknown')}"
+        )
+
     faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
     return [tuple(map(int, face)) for face in faces]
 
